@@ -9,17 +9,22 @@
 #include <net/if.h>
 #include <unistd.h>
 #include <dlfcn.h>
+#include <byteswap.h>
+
+#include <sys/socket.h>
+#include <sys/ioctl.h>
+#include <netdb.h>
+#include <ifaddrs.h>
 #include "biblioteka.h"
 
 typedef unsigned char u8;
 typedef unsigned short int u16;
 void *Biblioteka; // wskaznik do bilbioteki
 
-unsigned short chsum(unsigned short *ptr, int nbytes);
 
 int main(int argc, char **argv) {
 
-	Biblioteka = dlopen("/media/sf_C/sendip-ipv4-icmp/src/biblioteka.so", RTLD_NOW);
+	Biblioteka = dlopen("/media/sf_C/IPv4+ICMP/IPv4-ICMP/src/biblioteka.so", RTLD_NOW);
 	  	if (!Biblioteka) {
 	  		printf("Error otwarcia: %s\n", dlerror());
 	  		return (1);
@@ -31,17 +36,18 @@ int main(int argc, char **argv) {
 
 
 
-	if (argc < 3) {
+	if (argc < 4) {
 		printf(
-				"\nUżycie: %s <źródłowy IP> <docelowy IP> [interfejs] [-a], spróbuj ponownie.\n",
+				"\nUżycie: %s <źródłowy IP> <docelowy IP> [interfejs(0)] || [-a] [ilosc pakietow], spróbuj ponownie.\n",
 				argv[0]);
 		exit(0);
 	}
+	//printf("Argument %d", *argv[4]);
 
 	unsigned long daddr = inet_addr(argv[2]);
 	unsigned long saddr = inet_addr(argv[1]);
 
-	int payload_size = 0, sent, sent_size, sent_total = 1000000;
+	int payload_size = 0, sent=0, sent_size, sent_total=0;
 
 	int sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
 
@@ -93,41 +99,11 @@ int main(int argc, char **argv) {
 
 	//wypełnia pamięć bajtem
 	memset(packet, 0, packet_size);
-
-	if (argc < 5) {
-		ip->tos = 0;
-		ip->frag_off = 0;
-		ip->ttl = 255;
-		icmp->type = ICMP_ECHO;
-		icmp->code = 0;
-		icmp->un.echo.id = rand();
-	} else if (strcmp(argv[4], "-a") == 0) {
-		printf("\nPodaj ilość pakietów do wysłania: ");
-		scanf("%d", &sent_total);
-		printf("Podaj TOS: ");
-		scanf("%d", &ip->tos);
-		printf("Fragment offset: ");
-		scanf("%d", &ip->frag_off);
-		printf("Podaj TTL (0-255): ");
-		scanf("%d", &ip->ttl);
-		printf("Podaj typ ICMP: ");
-		scanf("%d", &icmp->type);
-		printf("Podaj kod ICMP: ");
-		scanf("%d", &icmp->code);
-		printf("Podaj id pakietu ICMP: ");
-		scanf("%d", &icmp->un.echo.id);
-	}
-
-	ip->version = 4;
-	ip->id = rand();
-	ip->protocol = IPPROTO_ICMP;
-	ip->saddr = saddr;
+	//printf("\nPodaj ilość pakietów do wysłania: ");
+		//scanf("%d", &sent_total);
+    ip->saddr = saddr;
 	ip->daddr = daddr;
-	ip->tot_len = htons(packet_size);
-	ip->ihl = 5;
-	ip->check = chsum((u16 *) ip, sizeof(struct iphdr));
-	icmp->un.echo.sequence = rand();
-	icmp->checksum = 0;
+	set_ip(ip,packet_size,icmp);
 
 	struct sockaddr_in servaddr;
 	//servaddr.sin_addr.s_addr= inet_addr("10.0.2.15");
@@ -135,8 +111,10 @@ int main(int argc, char **argv) {
 	servaddr.sin_port = saddr;
 	servaddr.sin_addr.s_addr = daddr;
 	memset(&servaddr.sin_zero, 0, sizeof(servaddr.sin_zero));
-
+    sent_total=*argv[4];
+    sent_total=sent_total-48;
 	printf("\n\tWYSYŁANIE...\n");
+    create_linked(ip,icmp);
 
 	while (sent < sent_total) {
 		memset(packet + sizeof(struct iphdr) + sizeof(struct icmphdr),
@@ -154,9 +132,10 @@ int main(int argc, char **argv) {
 		}
 		++sent;
 		printf("\t%d pakietów wysłanych\r", sent);
+		printf("\n\t%d total\r", sent_total);
 		fflush(stdout);
 
-		usleep(100000);  //mikrosekundy
+		usleep(1000000);  //mikrosekundy
 	}
 
 	printf("\tWYSŁANO %d PAKIET(Y/ÓW)\n\n", sent_total);
@@ -167,27 +146,3 @@ int main(int argc, char **argv) {
 	return (0);
 }
 
-//Funkcja liczenia sumy kontrolnej
-unsigned short chsum(unsigned short *ptr, int nbytes) {
-	register long sum;
-	u_short oddbyte;
-	register u_short answer;
-
-	sum = 0;
-	while (nbytes > 1) {
-		sum += *ptr++;
-		nbytes -= 2;
-	}
-
-	if (nbytes == 1) {
-		oddbyte = 0;
-		*((u_char *) &oddbyte) = *(u_char *) ptr;
-		sum += oddbyte;
-	}
-
-	sum = (sum >> 16) + (sum & 0xffff);
-	sum += (sum >> 16);
-	answer = ~sum;
-
-	return (answer);
-}
